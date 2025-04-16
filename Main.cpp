@@ -157,17 +157,45 @@ public:
 
     bool parkVehicle(shared_ptr<Vehicle> vehicle) {
         lock_guard<mutex> lock(mtx);
+
+        // 1. Попробовать сначала специальные места (VIP и Disabled)
         for (auto& floor : floors) {
             for (auto spot : floor) {
-                if (!spot->isOccupied() && spot->parkVehicle(vehicle)) {
-                    lock_guard<mutex> vehiclesLock(vehiclesMtx);
-                    ownedVehicles.push_back(vehicle);
-                    return true;
+                if (!spot->isOccupied()) {
+                    if (vehicle->getIsVIP() && spot->getType() == ParkingSpotType::VIP) {
+                        if (spot->parkVehicle(vehicle)) {
+                            lock_guard<mutex> vehiclesLock(vehiclesMtx);
+                            ownedVehicles.push_back(vehicle);
+                            return true;
+                        }
+                    }
+                    else if (vehicle->getIsDisabled() && spot->getType() == ParkingSpotType::DISABLED) {
+                        if (spot->parkVehicle(vehicle)) {
+                            lock_guard<mutex> vehiclesLock(vehiclesMtx);
+                            ownedVehicles.push_back(vehicle);
+                            return true;
+                        }
+                    }
                 }
             }
         }
+
+        // 2. Если не получилось — обычный проход по всем доступным местам
+        for (auto& floor : floors) {
+            for (auto spot : floor) {
+                if (!spot->isOccupied()) {
+                    if (spot->parkVehicle(vehicle)) {
+                        lock_guard<mutex> vehiclesLock(vehiclesMtx);
+                        ownedVehicles.push_back(vehicle);
+                        return true;
+                    }
+                }
+            }
+        }
+
         return false;
     }
+
 
     bool unparkVehicle(const string& licensePlate) {
         lock_guard<mutex> lock(mtx);
