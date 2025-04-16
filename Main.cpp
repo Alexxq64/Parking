@@ -243,43 +243,116 @@ int main() {
     ParkingLot lot;
     atomic<int> threadId{ 0 };
     atomic<double> trafficDelay{ 2.0 };
-    atomic<bool> running{ true };  // <--- Флаг работы
+    atomic<bool> running{ true };
+    thread generator, inputThread;
 
-    thread generator([&]() {
-        while (running) {
-            thread(simulateParking, ref(lot), threadId++).detach();
-            this_thread::sleep_for(chrono::duration<double>(trafficDelay.load()));
+    while (true) {
+        cout << "\n--- Menu ---\n";
+        cout << "1 - Park a vehicle\n";
+        cout << "2 - Unpark a vehicle\n";
+        cout << "3 - Show parking status\n";
+        cout << "4 - Start simulation\n";
+        cout << "0 - Exit\n";
+        cout << "Your choice: ";
+
+        int choice;
+        cin >> choice;
+
+        if (choice == 0) {
+            running = false;
+            cout << "Exiting...\n";
+            break;
         }
-        });
 
-    thread inputThread([&]() {
-        while (running) {
-            if (_kbhit()) {
-                char c = _getch();
-                if (c == '+') {
-                    trafficDelay.store(max(0.1, trafficDelay.load() - 0.1));
-                    cout << "\n[Input] Traffic UP: delay = " << trafficDelay.load() << "s\n";
-                }
-                else if (c == '-') {
-                    trafficDelay.store(trafficDelay.load() + 0.1);
-                    cout << "\n[Input] Traffic DOWN: delay = " << trafficDelay.load() << "s\n";
-                }
-                else if (c == '0') {
-                    running = false;
-                    cout << "\n[Input] Exiting...\n";
-                }
+        else if (choice == 1) {
+            int t, v, d;
+            cout << "Enter vehicle type (0 - Motorcycle, 1 - Small, 2 - Large): ";
+            cin >> t;
+            cout << "VIP? (1 - yes, 0 - no): ";
+            cin >> v;
+            cout << "Disabled? (1 - yes, 0 - no): ";
+            cin >> d;
+
+            auto vehicle = make_shared<Vehicle>(static_cast<VehicleType>(t), v, d);
+            if (lot.parkVehicle(vehicle)) {
+                cout << "Vehicle parked! License Plate: " << vehicle->getLicensePlate() << "\n";
             }
-            this_thread::sleep_for(chrono::milliseconds(100));
+            else {
+                cout << "No available parking spots!\n";
+            }
         }
-        });
 
-    while (running) {
-        lot.displayVisual();
-        this_thread::sleep_for(chrono::seconds(2));
+        else if (choice == 2) {
+            string plate;
+            cout << "Enter vehicle license plate: ";
+            cin >> plate;
+
+            if (lot.unparkVehicle(plate)) {
+                cout << "Vehicle with license plate " << plate << " has left.\n";
+            }
+            else {
+                cout << "Vehicle not found.\n";
+            }
+        }
+
+        else if (choice == 3) {
+            lot.displayVisual();
+        }
+
+        else if (choice == 4) {
+            if (generator.joinable() || inputThread.joinable()) {
+                cout << "Simulation already running.\n";
+                continue;
+            }
+
+            cout << "Simulation started! Press + / - to change intensity, 0 to stop.\n";
+
+            generator = thread([&]() {
+                while (running) {
+                    thread(simulateParking, ref(lot), threadId++).detach();
+                    this_thread::sleep_for(chrono::duration<double>(trafficDelay));
+                }
+                });
+
+            inputThread = thread([&]() {
+                while (running) {
+                    if (_kbhit()) {
+                        char c = _getch();
+                        if (c == '+') {
+                            trafficDelay.store(max(0.1, trafficDelay.load() - 0.1));
+                            cout << "\n[Input] Traffic UP: delay = " << trafficDelay.load() << "s\n";
+                        }
+                        else if (c == '-') {
+                            trafficDelay.store(trafficDelay.load() + 0.1);
+                            cout << "\n[Input] Traffic DOWN: delay = " << trafficDelay.load() << "s\n";
+                        }
+                        else if (c == '0') {
+                            running = false;
+                            cout << "\n[Input] Stopping simulation...\n";
+                        }
+                    }
+                    this_thread::sleep_for(chrono::milliseconds(100));
+                }
+                });
+
+            // Visualization
+            while (running) {
+                lot.displayVisual();
+                this_thread::sleep_for(chrono::seconds(2));
+            }
+
+            if (generator.joinable()) generator.join();
+            if (inputThread.joinable()) inputThread.join();
+        }
+
+        else {
+            cout << "Invalid input. Please try again.\n";
+        }
     }
 
-    generator.join();
-    inputThread.join();
     return 0;
 }
+
+
+
 
