@@ -1,4 +1,4 @@
-#include <iostream>
+п»ї#include <iostream>
 #include <vector>
 #include <map>
 #include <thread>
@@ -8,23 +8,14 @@
 #include <random>
 #include <chrono>
 #include <string>
+#include <memory>
+#include <atomic>
+#include <conio.h> // РўРѕР»СЊРєРѕ РґР»СЏ Windows
 
 using namespace std;
 
-enum class VehicleType {
-    MOTORCYCLE,
-    SMALL,
-    LARGE,
-    DISABLED
-};
-
-enum class ParkingSpotType {
-    MOTORCYCLE,
-    SMALL,
-    LARGE,
-    DISABLED,
-    VIP
-};
+enum class VehicleType { MOTORCYCLE, SMALL, LARGE };
+enum class ParkingSpotType { MOTORCYCLE, SMALL, LARGE, DISABLED, VIP };
 
 class Vehicle {
 private:
@@ -40,7 +31,7 @@ public:
             random_device rd;
             mt19937 gen(rd());
             uniform_int_distribution<> dis(100, 999);
-            licensePlate = std::to_string(dis(gen)) + char('A' + dis(gen) % 26) + char('A' + dis(gen) % 26);
+            licensePlate = to_string(dis(gen)) + char('A' + dis(gen) % 26) + char('A' + dis(gen) % 26);
         }
         else {
             licensePlate = plate;
@@ -57,7 +48,6 @@ public:
         case VehicleType::MOTORCYCLE: return "Motorcycle";
         case VehicleType::SMALL: return "Small";
         case VehicleType::LARGE: return "Large";
-        case VehicleType::DISABLED: return "Disabled";
         default: return "Unknown";
         }
     }
@@ -68,8 +58,8 @@ private:
     int floor;
     int number;
     ParkingSpotType type;
-    Vehicle* parkedVehicle;
-    std::mutex mtx;
+    shared_ptr<Vehicle> parkedVehicle;
+    mutex mtx;
 
 public:
     ParkingSpot(int floor, int number, ParkingSpotType type)
@@ -80,7 +70,7 @@ public:
     ParkingSpotType getType() const { return type; }
     int getFloor() const { return floor; }
     int getNumber() const { return number; }
-    Vehicle* getVehicle() const { return parkedVehicle; }
+    shared_ptr<Vehicle> getVehicle() const { return parkedVehicle; }
 
     string getTypeString() const {
         switch (type) {
@@ -93,30 +83,26 @@ public:
         }
     }
 
-    bool parkVehicle(Vehicle* vehicle) {
-        std::lock_guard<std::mutex> lock(mtx);
-        if (parkedVehicle != nullptr) return false;
+    bool parkVehicle(shared_ptr<Vehicle> vehicle) {
+        lock_guard<mutex> lock(mtx);
+        if (parkedVehicle) return false;
 
-        if (vehicle->getIsVIP() && type != ParkingSpotType::VIP) return false;
-        if (!vehicle->getIsVIP() && type == ParkingSpotType::VIP) return false;
-        if (vehicle->getIsDisabled() && type != ParkingSpotType::DISABLED) return false;
+        if (type == ParkingSpotType::VIP && !vehicle->getIsVIP()) return false;
+        if (type == ParkingSpotType::DISABLED && !vehicle->getIsDisabled()) return false;
 
         switch (vehicle->getType()) {
         case VehicleType::MOTORCYCLE:
-            if (type != ParkingSpotType::MOTORCYCLE &&
-                type != ParkingSpotType::SMALL &&
-                type != ParkingSpotType::LARGE) return false;
-            break;
+            if (type == ParkingSpotType::LARGE || type == ParkingSpotType::SMALL || type == ParkingSpotType::MOTORCYCLE || type == ParkingSpotType::VIP || type == ParkingSpotType::DISABLED)
+                break;
+            else return false;
         case VehicleType::SMALL:
-            if (type != ParkingSpotType::SMALL &&
-                type != ParkingSpotType::LARGE) return false;
-            break;
+            if (type == ParkingSpotType::LARGE || type == ParkingSpotType::SMALL || type == ParkingSpotType::VIP || type == ParkingSpotType::DISABLED)
+                break;
+            else return false;
         case VehicleType::LARGE:
-            if (type != ParkingSpotType::LARGE) return false;
-            break;
-        case VehicleType::DISABLED:
-            if (type != ParkingSpotType::DISABLED) return false;
-            break;
+            if (type == ParkingSpotType::LARGE || type == ParkingSpotType::VIP || type == ParkingSpotType::DISABLED)
+                break;
+            else return false;
         }
 
         parkedVehicle = vehicle;
@@ -125,7 +111,7 @@ public:
 
     bool unparkVehicle() {
         lock_guard<mutex> lock(mtx);
-        if (parkedVehicle == nullptr) return false;
+        if (!parkedVehicle) return false;
         parkedVehicle = nullptr;
         return true;
     }
@@ -134,38 +120,48 @@ public:
 class ParkingLot {
 private:
     vector<vector<ParkingSpot*>> floors;
-    map<string, pair<int, int>> vehicleLocation;
-    mutable std::mutex mtx;
+    vector<shared_ptr<Vehicle>> ownedVehicles;
+    mutable mutex mtx;
+    mutable mutex vehiclesMtx;
 
 public:
     ParkingLot() {
-        vector<ParkingSpot*> floor1;
-        for (int i = 0; i < 5; ++i) floor1.push_back(new ParkingSpot(1, i, ParkingSpotType::MOTORCYCLE));
-        for (int i = 5; i < 15; ++i) floor1.push_back(new ParkingSpot(1, i, ParkingSpotType::SMALL));
-        for (int i = 15; i < 20; ++i) floor1.push_back(new ParkingSpot(1, i, ParkingSpotType::LARGE));
-        for (int i = 20; i < 22; ++i) floor1.push_back(new ParkingSpot(1, i, ParkingSpotType::DISABLED));
-        floors.push_back(floor1);
+        int totalFloors = 3;
+        int spotsPerFloor = 10;
+        for (int floor = 1; floor <= totalFloors; ++floor) {
+            vector<ParkingSpot*> floorSpots;
+            for (int number = 0; number < spotsPerFloor; ++number) {
+                ParkingSpotType type;
+                if (number < 2)
+                    type = ParkingSpotType::MOTORCYCLE;
+                else if (number < 4)
+                    type = ParkingSpotType::SMALL;
+                else if (number < 7)
+                    type = ParkingSpotType::LARGE;
+                else if (number == 7)
+                    type = ParkingSpotType::DISABLED;
+                else
+                    type = ParkingSpotType::VIP;
 
-        vector<ParkingSpot*> floor2;
-        for (int i = 0; i < 10; ++i) floor2.push_back(new ParkingSpot(2, i, ParkingSpotType::VIP));
-        for (int i = 10; i < 12; ++i) floor2.push_back(new ParkingSpot(2, i, ParkingSpotType::DISABLED));
-        floors.push_back(floor2);
-    }
-
-    ~ParkingLot() {
-        for (auto& floor : floors) {
-            for (auto spot : floor) {
-                delete spot;
+                floorSpots.push_back(new ParkingSpot(floor, number, type));
             }
+            floors.push_back(floorSpots);
         }
     }
 
-    bool parkVehicle(Vehicle* vehicle) {
+    ~ParkingLot() {
+        for (auto& floor : floors)
+            for (auto spot : floor)
+                delete spot;
+    }
+
+    bool parkVehicle(shared_ptr<Vehicle> vehicle) {
         lock_guard<mutex> lock(mtx);
         for (auto& floor : floors) {
             for (auto spot : floor) {
                 if (!spot->isOccupied() && spot->parkVehicle(vehicle)) {
-                    vehicleLocation[vehicle->getLicensePlate()] = make_pair(spot->getFloor(), spot->getNumber());
+                    lock_guard<mutex> vehiclesLock(vehiclesMtx);
+                    ownedVehicles.push_back(vehicle);
                     return true;
                 }
             }
@@ -175,238 +171,115 @@ public:
 
     bool unparkVehicle(const string& licensePlate) {
         lock_guard<mutex> lock(mtx);
-        auto it = vehicleLocation.find(licensePlate);
-        if (it == vehicleLocation.end()) return false;
-
-        int floor = it->second.first;
-        int spotNum = it->second.second;
-        bool success = floors[floor - 1][spotNum]->unparkVehicle();
-        if (success) {
-            vehicleLocation.erase(it);
-        }
-        return success;
-    }
-
-    void displayStatus() const {
-        std::lock_guard<mutex> lock(mtx);
-        cout << "\nParking Lot Status:\n";
-        cout << "-------------------\n";
-
-        for (const auto& floor : floors) {
-            cout << "Floor " << floor[0]->getFloor() << ":\n";
-            cout << left << setw(12) << "Spot" << setw(12) << "Type" << setw(10) << "Status" << "Vehicle\n";
-            cout << string(50, '-') << endl;
-
-            for (const auto spot : floor) {
-                cout << left << setw(12) << spot->getNumber()
-                    << setw(12) << spot->getTypeString()
-                    << setw(10) << (spot->isOccupied() ? "Occupied" : "Free");
-
-                if (spot->isOccupied()) {
-                    Vehicle* v = spot->getVehicle();
-                    cout << v->getLicensePlate() << " (" << v->getTypeString();
-                    if (v->getIsVIP()) cout << ", VIP";
-                    if (v->getIsDisabled()) cout << ", Disabled";
-                    cout << ")";
+        for (auto& floor : floors) {
+            for (auto spot : floor) {
+                auto vehicle = spot->getVehicle();
+                if (vehicle && vehicle->getLicensePlate() == licensePlate) {
+                    spot->unparkVehicle();
+                    lock_guard<mutex> vehiclesLock(vehiclesMtx);
+                    auto it = find(ownedVehicles.begin(), ownedVehicles.end(), vehicle);
+                    if (it != ownedVehicles.end())
+                        ownedVehicles.erase(it);
+                    return true;
                 }
-                cout << endl;
             }
-            cout << endl;
         }
+        return false;
     }
 
     void displayVisual() const {
-        std::lock_guard<mutex> lock(mtx);
-        cout << "\nParking Lot Visual:\n";
-        cout << "------------------\n";
-
+        lock_guard<mutex> lock(mtx);
+        cout << "\n=== Parking Lot Map ===\n";
         for (const auto& floor : floors) {
-            cout << "Floor " << floor[0]->getFloor() << ":\n";
-            for (const auto spot : floor) {
-                char symbol;
-                switch (spot->getType()) {
-                case ParkingSpotType::MOTORCYCLE: symbol = 'M'; break;
-                case ParkingSpotType::SMALL: symbol = 'S'; break;
-                case ParkingSpotType::LARGE: symbol = 'L'; break;
-                case ParkingSpotType::DISABLED: symbol = 'D'; break;
-                case ParkingSpotType::VIP: symbol = 'V'; break;
-                default: symbol = '?';
-                }
-
-                if (spot->isOccupied()) {
-                    cout << "\033[1;31m" << symbol << "\033[0m ";
-                }
-                else {
-                    cout << "\033[1;32m" << symbol << "\033[0m ";
-                }
+            cout << "Floor " << floor[0]->getFloor() << ": ";
+            for (const auto& spot : floor) {
+                string t = spot->getTypeString().substr(0, 1);
+                cout << (spot->isOccupied() ? "\033[1;31mX" : "\033[1;32m-") << t << "\033[0m ";
             }
-            cout << "\n\n";
+            cout << "\n";
         }
-    }
-
-    bool isVehicleParked(const string& licensePlate) const {
-        std::lock_guard<mutex> lock(mtx);
-        return vehicleLocation.find(licensePlate) != vehicleLocation.end();
     }
 };
 
-void simulateParking(ParkingLot& parkingLot, int threadId) {
+void simulateParking(ParkingLot& lot, int id) {
     random_device rd;
     mt19937 gen(rd());
-    uniform_int_distribution<> typeDist(0, 3);
+    uniform_int_distribution<> typeDist(0, 2);
     uniform_int_distribution<> boolDist(0, 1);
+    uniform_int_distribution<> waitDist(5, 15);
+    uniform_int_distribution<> retryDelay(100, 300);
 
-    for (int i = 0; i < 3; ++i) {
-        VehicleType type = static_cast<VehicleType>(typeDist(gen));
-        bool isVIP = boolDist(gen);
-        bool isDisabled = boolDist(gen);
+    auto type = static_cast<VehicleType>(typeDist(gen));
+    bool isVIP = boolDist(gen);
+    bool isDisabled = boolDist(gen);
 
-        Vehicle* vehicle = new Vehicle(type, isVIP, isDisabled);
+    auto vehicle = make_shared<Vehicle>(type, isVIP, isDisabled);
+    bool parked = false;
 
-        if (parkingLot.parkVehicle(vehicle)) {
-            cout << "Thread " << threadId << ": Parked " << vehicle->getTypeString()
-                << " (Plate: " << vehicle->getLicensePlate() << ")";
-            if (isVIP) cout << " [VIP]";
-            if (isDisabled) cout << " [Disabled]";
-            cout << endl;
-
-            this_thread::sleep_for(chrono::milliseconds(500 + gen() % 1000));
-
-            if (parkingLot.unparkVehicle(vehicle->getLicensePlate())) {
-                cout << "Thread " << threadId << ": Unparked " << vehicle->getLicensePlate() << endl;
-            }
-            else {
-                cout << "Thread " << threadId << ": Failed to unpark " << vehicle->getLicensePlate() << endl;
-            }
+    for (int attempt = 0; attempt < 10; ++attempt) {
+        if (lot.parkVehicle(vehicle)) {
+            parked = true;
+            break;
         }
-        else {
-            cout << "Thread " << threadId << ": Failed to park " << vehicle->getTypeString()
-                << " (no suitable spot)" << endl;
-        }
+        this_thread::sleep_for(chrono::milliseconds(retryDelay(gen)));
+    }
 
-        delete vehicle;
-        this_thread::sleep_for(chrono::milliseconds(500));
+    if (!parked) {
+        cout << "Thread " << id << ": No space for " << vehicle->getLicensePlate() << "\n";
+        return;
+    }
+
+    cout << "Thread " << id << ": Parked " << vehicle->getLicensePlate()
+        << (isVIP ? " [VIP]" : "") << (isDisabled ? " [Disabled]" : "") << "\n";
+
+    this_thread::sleep_for(chrono::seconds(waitDist(gen)));
+
+    if (lot.unparkVehicle(vehicle->getLicensePlate())) {
+        cout << "Thread " << id << ": " << vehicle->getLicensePlate() << " left\n";
     }
 }
 
 int main() {
-    ParkingLot parkingLot;
+    ParkingLot lot;
+    atomic<int> threadId{ 0 };
+    atomic<double> trafficDelay{ 2.0 };
+    atomic<bool> running{ true };  // <--- Р¤Р»Р°Рі СЂР°Р±РѕС‚С‹
 
-    // Случайная начальная инициализация
-    random_device rd;
-    mt19937 gen(rd());
-    uniform_int_distribution<> typeDist(0, 3);
-    uniform_int_distribution<> boolDist(0, 1);
-    uniform_int_distribution<> countDist(5, 10);
+    thread generator([&]() {
+        while (running) {
+            thread(simulateParking, ref(lot), threadId++).detach();
+            this_thread::sleep_for(chrono::duration<double>(trafficDelay.load()));
+        }
+        });
 
-    int initialVehicles = countDist(gen);
-    for (int i = 0; i < initialVehicles; ++i) {
-        VehicleType type = static_cast<VehicleType>(typeDist(gen));
-        bool isVIP = boolDist(gen);
-        bool isDisabled = boolDist(gen);
-        Vehicle* v = new Vehicle(type, isVIP, isDisabled);
+    thread inputThread([&]() {
+        while (running) {
+            if (_kbhit()) {
+                char c = _getch();
+                if (c == '+') {
+                    trafficDelay.store(max(0.1, trafficDelay.load() - 0.1));
+                    cout << "\n[Input] Traffic UP: delay = " << trafficDelay.load() << "s\n";
+                }
+                else if (c == '-') {
+                    trafficDelay.store(trafficDelay.load() + 0.1);
+                    cout << "\n[Input] Traffic DOWN: delay = " << trafficDelay.load() << "s\n";
+                }
+                else if (c == '0') {
+                    running = false;
+                    cout << "\n[Input] Exiting...\n";
+                }
+            }
+            this_thread::sleep_for(chrono::milliseconds(100));
+        }
+        });
 
-        if (!parkingLot.parkVehicle(v)) delete v;
+    while (running) {
+        lot.displayVisual();
+        this_thread::sleep_for(chrono::seconds(2));
     }
 
-    cout << "\nParking lot initialized with " << initialVehicles << " random vehicles.\n";
-
-    int choice;
-    do {
-        cout << "\nParking Management System\n";
-        cout << "1. Park a vehicle\n";
-        cout << "2. Unpark a vehicle\n";
-        cout << "3. Display parking status\n";
-        cout << "4. Display visual parking map\n";
-        cout << "5. Run multithreading simulation\n";
-        cout << "0. Exit\n";
-        cout << "Enter your choice: ";
-        cin >> choice;
-
-        switch (choice) {
-        case 1: {
-            int typeChoice;
-            bool isVIP, isDisabled;
-            std::string licensePlate;
-
-            cout << "Select vehicle type:\n";
-            cout << "1. Motorcycle\n";
-            cout << "2. Small car\n";
-            cout << "3. Large car\n";
-            cout << "4. Disabled vehicle\n";
-            cout << "Enter type (1-4): ";
-            cin >> typeChoice;
-
-            cout << "Is VIP? (0/1): ";
-            cin >> isVIP;
-            cout << "Is disabled? (0/1): ";
-            cin >> isDisabled;
-            cout << "Enter license plate (or leave empty for random): ";
-            cin.ignore();
-            std::getline(cin, licensePlate);
-
-            VehicleType type;
-            switch (typeChoice) {
-            case 1: type = VehicleType::MOTORCYCLE; break;
-            case 2: type = VehicleType::SMALL; break;
-            case 3: type = VehicleType::LARGE; break;
-            case 4: type = VehicleType::DISABLED; break;
-            default:
-                cout << "Invalid type!\n";
-                continue;
-            }
-
-            Vehicle* vehicle = new Vehicle(type, isVIP, isDisabled, licensePlate);
-            if (parkingLot.parkVehicle(vehicle)) {
-                cout << "Vehicle parked successfully! Plate: " << vehicle->getLicensePlate() << endl;
-            }
-            else {
-                cout << "Failed to park vehicle - no suitable spot available.\n";
-                delete vehicle;
-            }
-            break;
-        }
-        case 2: {
-            string licensePlate;
-            cout << "Enter license plate to unpark: ";
-            cin >> licensePlate;
-
-            if (parkingLot.unparkVehicle(licensePlate)) {
-                cout << "Vehicle with plate " << licensePlate << " has left the parking.\n";
-            }
-            else {
-                cout << "No vehicle found with plate " << licensePlate << " or error occurred.\n";
-            }
-            break;
-        }
-        case 3:
-            parkingLot.displayStatus();
-            break;
-        case 4:
-            parkingLot.displayVisual();
-            break;
-        case 5: {
-            const int numThreads = 10;
-            thread threads[numThreads];
-
-            cout << "Starting multithreading simulation with " << numThreads << " threads...\n";
-            for (int i = 0; i < numThreads; ++i) {
-                threads[i] = thread(simulateParking, ref(parkingLot), i + 1);
-            }
-
-            for (int i = 0; i < numThreads; ++i) {
-                threads[i].join();
-            }
-            cout << "Simulation completed.\n";
-            break;
-        }
-        case 0:
-            cout << "Exiting...\n";
-            break;
-        default:
-            cout << "Invalid choice. Try again.\n";
-        }
-    } while (choice != 0);
-
+    generator.join();
+    inputThread.join();
     return 0;
 }
+
